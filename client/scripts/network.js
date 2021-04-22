@@ -5,6 +5,8 @@ window.isRtcSupported = !!(
   window.webkitRTCPeerConnection
 );
 
+console.log("pandrop version 0.0.8");
+
 class ServerConnection {
   constructor() {
     this._connect();
@@ -137,6 +139,7 @@ class Peer {
   }
 
   _onPartitionEnd(offset) {
+    // console.log("_onPartitionEnd-partiton-offset=", offset);
     this.sendJSON({ type: "partition", offset: offset });
   }
 
@@ -144,11 +147,21 @@ class Peer {
     if (this._digester.isPartitionSuccess(offset)) {
       this.sendJSON({ type: "partition-received", offset: offset });
     } else {
-      this.sendJSON({ type: "resend-partition", offset: offset });
+      // console.log(
+      //   "----> Notify re-send message sender with " +
+      //     this._digester._lastOffset +
+      //     " input offset " +
+      //     offset
+      // );
+      this.sendJSON({
+        type: "resend-partition",
+        offset: this._digester._lastOffset,
+      });
     }
   }
 
   _onResendPartition(offset) {
+    // console.log("=========> sender received offset value is " + offset);
     this._chunker.resendPartition(offset);
   }
 
@@ -211,7 +224,7 @@ class Peer {
     this._onDownloadProgress(progress);
 
     // occasionally notify sender about our progress
-    if (progress - this._lastProgress < 0.01) return;
+    if (progress - this._lastProgress < 0.05) return;
     this._lastProgress = progress;
     this._sendProgress(progress);
   }
@@ -248,6 +261,9 @@ class Peer {
 class RTCPeer extends Peer {
   constructor(serverConnection, peerId) {
     super(serverConnection, peerId);
+    // this._haveResendTest = false;
+    // this._resendThrehold = 3e6;
+    // this._bytesSent = 0;
     if (!peerId) return; // we will listen for a caller
     this._connect(peerId, true);
   }
@@ -361,7 +377,24 @@ class RTCPeer extends Peer {
 
   _send(message) {
     if (!this._channel) return this.refresh();
-    console.log("buffered amount=", this._channel.bufferedAmount);
+    // console.log("buffered amount=", this._channel.bufferedAmount);
+    // console.log(
+    //   "================&&>",
+    //   this._haveResendTest,
+    //   this._bytesSent,
+    //   this._resendThrehold
+    // );
+    // if (!this._haveResendTest && this._bytesSent > this._resendThrehold) {
+    //   this._haveResendTest = true;
+    //   this._bytesSent = 0;
+    //   if (typeof message !== "string") {
+    //     console.log("ignore a message for re-send test purpose");
+    //     return;
+    //   }
+    // }
+    // if (typeof message !== "string") {
+    //   this._bytesSent += message.byteLength;
+    // }
     this._channel.send(message);
   }
 
@@ -447,8 +480,8 @@ class WSPeer {
 
 class FileChunker {
   constructor(file, onChunk, onPartitionEnd) {
-    this._chunkSize = 262144; // 64 KB
-    // this._chunkSize = 64000;
+    this._chunkSize = 262144;
+    // this._chunkSize = 64000; // 64 KB
     // this._maxPartitionSize = 1e6; // 1 MB
     this._maxPartitionSize = this._chunkSize * 8;
     this._offset = 0;
@@ -477,6 +510,7 @@ class FileChunker {
   }
 
   _onChunkRead(chunk) {
+    if (chunk.byteLength === 0) return;
     this._offset += chunk.byteLength;
     this._partitionSize += chunk.byteLength;
     this._onChunk(chunk);
@@ -523,6 +557,7 @@ class FileDigester {
     this._buffer = [];
     this._bytesReceived = 0;
     this._lastOffset = 0;
+    this._lastBufferMark = 0;
     this._size = meta.size;
     this._mime = meta.mime || "application/octet-stream";
     this._name = meta.name;
@@ -530,13 +565,24 @@ class FileDigester {
   }
 
   isPartitionSuccess(offset) {
-    console.log("received bytes=", this._bytesReceived, "offset=", offset);
     if (this._bytesReceived === offset) {
       this._lastOffset = offset;
+      this._lastBufferMark = this._buffer.length;
       return true;
     }
+    // console.log(
+    //   "received bytes= " +
+    //     this._bytesReceived +
+    //     " offset= " +
+    //     offset +
+    //     " this._lastOffset=" +
+    //     this._lastOffset +
+    //     " this._lastBufferMark" +
+    //     this._lastBufferMark
+    // );
     this._bytesReceived = this._lastOffset;
-    this._buffer = this._buffer.slice(0, this._lastOffset);
+    this._buffer = this._buffer.slice(0, this._lastBufferMark);
+    // console.log("_buffer length=", this._buffer.length);
     return false;
   }
 
